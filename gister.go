@@ -44,7 +44,7 @@ const (
 //User agent defines a custom agent (required by GitHub)
 //`token` stores the GITHUB_TOKEN from the env variables
 var (
-	USER_AGENT = "gist/#" + VERSION //Github requires this, else rejects API request
+	USER_AGENT = "gist/" + VERSION
 	token      = os.Getenv("GITHUB_TOKEN")
 )
 
@@ -58,6 +58,7 @@ var (
 	public      bool
 	description string
 	anonymous   bool
+	update      string
 	responseObj map[string]interface{}
 )
 
@@ -68,7 +69,7 @@ type GistFile struct {
 
 // The required structure for POST data for API purposes
 type Gist struct {
-	Description string              `json:"description"`
+	Description string              `json:"description",omitempty`
 	Public      bool                `json:"public"`
 	GistFile    map[string]GistFile `json:"files"`
 }
@@ -87,7 +88,7 @@ func loadTokenFromFile() (token string) {
 
 // Defines basic usage when program is run with the help flag
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: gist [-p] [-d] [-a] example\n")
+	fmt.Fprintf(os.Stderr, "usage: gist [options] file...\n")
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -100,11 +101,12 @@ func usage() {
 // anonymous gist or not.
 // The response recieved is parsed and the Gist URL is printed to STDOUT.
 func main() {
+	flag.StringVar(&update, "update", "", "id of existing gist to update")
 	flag.StringVar(&slug, "slug", "", "Set prefered short url")
-	flag.BoolVar(&wantshort, "short", true, "Generate short url (default true)")
-	flag.BoolVar(&public, "public", false, "Set to false for private gist.")
-	flag.BoolVar(&anonymous, "anonymous", false, "Set false if you want the gist for a user")
-	flag.StringVar(&description, "d", "gist", "Description for gist.")
+	flag.BoolVar(&wantshort, "short", true, "Generate short url")
+	flag.BoolVar(&public, "public", false, "Set to true for public gist.")
+	flag.BoolVar(&anonymous, "anonymous", false, "Set to true for anonymous gist user")
+	flag.StringVar(&description, "d", "", "Description for gist.")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -121,7 +123,10 @@ func main() {
 		if err != nil {
 			log.Fatal("File Error: ", err)
 		}
-		files[filename] = GistFile{string(content)}
+
+		// gists api doesn't allow / on filenames
+		name := filepath.Base(filename)
+		files[name] = GistFile{string(content)}
 	}
 
 	if description == "" {
@@ -140,15 +145,15 @@ func main() {
 		log.Fatal("Cannot marshal json: ", err)
 	}
 
-	//Check if JSON marshalling succeeds
-	//fmt.Println("OK")
-
 	b := bytes.NewBuffer(pfile)
 	fmt.Println("Uploading...")
 
 	// Send request to API
-
-	req, err := http.NewRequest("POST", "https://api.github.com/gists", b)
+	post_to := GITHUB_API_URL + "gists"
+	if update != "" {
+		post_to += "/" + update
+	}
+	req, err := http.NewRequest("POST", post_to, b)
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -168,6 +173,19 @@ func main() {
 	err = json.NewDecoder(response.Body).Decode(&responseObj)
 	if err != nil {
 		log.Fatal("Response JSON error: ", err)
+	}
+
+	if _, ok := responseObj["html_url"]; !ok {
+		// something went wrong
+		fmt.Println(responseObj["message"])
+		if a, ok := responseObj["errors"]; ok {
+			for i, m := range a.([]interface{}) {
+				for k, v := range m.(map[string]interface{}) {
+					fmt.Printf("%d %s: %s\n", i, k, v)
+				}
+			}
+		}
+		os.Exit(1)
 	}
 
 	fmt.Println("===Gist URL===")

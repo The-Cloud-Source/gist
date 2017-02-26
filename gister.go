@@ -48,6 +48,11 @@ var (
 	token      = os.Getenv("GITHUB_TOKEN")
 )
 
+var (
+	wantshort bool
+	slug      string
+)
+
 // Variables used in `Gist` struct
 var (
 	public      bool
@@ -95,7 +100,9 @@ func usage() {
 // anonymous gist or not.
 // The response recieved is parsed and the Gist URL is printed to STDOUT.
 func main() {
-	flag.BoolVar(&public, "public", true, "Set to false for private gist.")
+	flag.StringVar(&slug, "slug", "", "Set prefered short url")
+	flag.BoolVar(&wantshort, "short", true, "Generate short url (default true)")
+	flag.BoolVar(&public, "public", false, "Set to false for private gist.")
 	flag.BoolVar(&anonymous, "anonymous", false, "Set false if you want the gist for a user")
 	flag.StringVar(&description, "d", "gist", "Description for gist.")
 	flag.Usage = usage
@@ -134,7 +141,7 @@ func main() {
 	}
 
 	//Check if JSON marshalling succeeds
-	fmt.Println("OK")
+	//fmt.Println("OK")
 
 	b := bytes.NewBuffer(pfile)
 	fmt.Println("Uploading...")
@@ -165,14 +172,20 @@ func main() {
 
 	fmt.Println("===Gist URL===")
 	fmt.Println(responseObj["html_url"])
-	fmt.Println(shorten(responseObj["html_url"].(string)))
+	if wantshort {
+		fmt.Println(shorten(responseObj["html_url"].(string)))
+	}
 }
 
 func shorten(s string) string {
 
 	form := url.Values{}
 	form.Add("url", s)
-	req, err := http.NewRequest("POST", GIT_IO_URL+"/create", strings.NewReader(form.Encode()))
+	if slug != "" {
+		form.Add("code", slug)
+	}
+	//req, err := http.NewRequest("POST", GIT_IO_URL+"/create", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", GIT_IO_URL, strings.NewReader(form.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	client := http.Client{}
@@ -184,11 +197,14 @@ func shorten(s string) string {
 
 	switch response.StatusCode {
 	case 200:
+		// when we use /create we get 200 and the short url on the body
 		b, _ := ioutil.ReadAll(response.Body)
 		return GIT_IO_URL + "/" + string(b)
 	case 201:
+		// when we post to / we get 201 and the whole short url on the Location Header
 		return string(response.Header["Location"][0])
 	default:
+		// epic fail!
 		return s
 	}
 }

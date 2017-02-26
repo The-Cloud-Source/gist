@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,7 @@ const (
 const (
 	GITHUB_API_URL = "https://api.github.com/"
 	BASE_PATH      = "/api/v3"
+	GIT_IO_URL     = "https://git.io"
 )
 
 //User agent defines a custom agent (required by GitHub)
@@ -48,7 +50,7 @@ var (
 
 // Variables used in `Gist` struct
 var (
-	publicFlag  bool
+	public      bool
 	description string
 	anonymous   bool
 	responseObj map[string]interface{}
@@ -62,7 +64,7 @@ type GistFile struct {
 // The required structure for POST data for API purposes
 type Gist struct {
 	Description string              `json:"description"`
-	PublicFile  bool                `json:"public"`
+	Public      bool                `json:"public"`
 	GistFile    map[string]GistFile `json:"files"`
 }
 
@@ -93,9 +95,9 @@ func usage() {
 // anonymous gist or not.
 // The response recieved is parsed and the Gist URL is printed to STDOUT.
 func main() {
-	flag.BoolVar(&publicFlag, "p", true, "Set to false for private gist.")
-	flag.BoolVar(&anonymous, "a", true, "Set false if you want the gist for a user")
-	flag.StringVar(&description, "d", "This is a gist", "Description for gist.")
+	flag.BoolVar(&public, "public", true, "Set to false for private gist.")
+	flag.BoolVar(&anonymous, "anonymous", false, "Set false if you want the gist for a user")
+	flag.StringVar(&description, "d", "gist", "Description for gist.")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -121,9 +123,9 @@ func main() {
 
 	//create a gist from the files array
 	gist := Gist{
-		description,
-		publicFlag,
-		files,
+		Description: description,
+		Public:      public,
+		GistFile:    files,
 	}
 
 	pfile, err := json.Marshal(gist)
@@ -141,12 +143,12 @@ func main() {
 
 	req, err := http.NewRequest("POST", "https://api.github.com/gists", b)
 
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 	if !anonymous {
 		if token == "" {
 			token = loadTokenFromFile()
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
 		req.SetBasicAuth(token, "x-oauth-basic")
 	}
 
@@ -155,6 +157,7 @@ func main() {
 	if err != nil {
 		log.Fatal("HTTP error: ", err)
 	}
+	defer response.Body.Close()
 	err = json.NewDecoder(response.Body).Decode(&responseObj)
 	if err != nil {
 		log.Fatal("Response JSON error: ", err)
@@ -162,4 +165,30 @@ func main() {
 
 	fmt.Println("===Gist URL===")
 	fmt.Println(responseObj["html_url"])
+	fmt.Println(shorten(responseObj["html_url"].(string)))
+}
+
+func shorten(s string) string {
+
+	form := url.Values{}
+	form.Add("url", s)
+	req, err := http.NewRequest("POST", GIT_IO_URL+"/create", strings.NewReader(form.Encode()))
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	client := http.Client{}
+	response, err := client.Do(req)
+	if err != nil {
+		log.Fatal("HTTP error: ", err)
+	}
+	defer response.Body.Close()
+
+	switch response.StatusCode {
+	case 200:
+		b, _ := ioutil.ReadAll(response.Body)
+		return GIT_IO_URL + "/" + string(b)
+	case 201:
+		return string(response.Header["Location"][0])
+	default:
+		return s
+	}
 }
